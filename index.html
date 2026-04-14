@@ -48,7 +48,7 @@ select:focus,input[type=date]:focus{border-color:var(--cyan)}
 .ks{margin-bottom:18px}
 .ks-hdr{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:var(--txd);margin-bottom:8px;display:flex;align-items:center;gap:8px;font-family:'IBM Plex Mono',monospace}
 .ks-hdr::after{content:'';flex:1;height:1px;background:var(--bd)}
-.kr{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px}
+.kr{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px}
 .k{background:var(--sf);border:1px solid var(--bd);border-radius:8px;padding:12px 14px;position:relative;overflow:hidden;transition:transform .15s,border-color .15s}
 .k:hover{transform:translateY(-2px);border-color:var(--bd2)}
 .k::before{content:'';position:absolute;top:0;left:0;right:0;height:2px}
@@ -130,6 +130,15 @@ select:focus,input[type=date]:focus{border-color:var(--cyan)}
 .cbm{position:absolute;top:-4px;width:3px;height:14px;background:#fff;border-radius:2px;transform:translateX(-50%);transition:left .4s}
 .cbl{display:flex;justify-content:space-between;font-size:9px;color:var(--txd);margin-top:3px;font-family:'IBM Plex Mono',monospace}
 
+/* HEATMAP */
+.hm-wrap{background:var(--sf);border:1px solid var(--bd);border-radius:var(--r);padding:16px;margin-bottom:10px}
+.hm-inner{overflow-x:auto;-webkit-overflow-scrolling:touch}
+#hmCanvas{display:block;cursor:crosshair}
+.hm-legend{display:flex;align-items:center;gap:10px;margin-top:10px;justify-content:center}
+.hm-grad{width:160px;height:10px;border-radius:4px;background:linear-gradient(90deg,#3b82f6,#101e2e 50%,#ef4444)}
+.hm-leg-lbl{font-size:9px;font-family:'IBM Plex Mono',monospace;color:var(--txd)}
+.hm-note{font-size:9px;font-family:'IBM Plex Mono',monospace;color:var(--txd);text-align:center;margin-top:6px}
+
 .ft{text-align:center;padding:22px;color:var(--txd);font-size:10px;font-family:'IBM Plex Mono',monospace;border-top:1px solid var(--bd);margin-top:20px;letter-spacing:.5px}
 </style>
 </head>
@@ -173,10 +182,24 @@ select:focus,input[type=date]:focus{border-color:var(--cyan)}
 <div class="st"><span>📈</span> Tendencias — Agrupadas por Tipo de Parámetro</div>
 <div class="trend-container" id="tC"></div>
 
+<!-- HEATMAP -->
+<div class="st" style="margin-top:26px"><span>🗺️</span> Mapa de Calor — Correlaciones entre Variables</div>
+<div class="corr-section" style="padding:16px 16px 12px">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+    <div style="font-size:10px;color:var(--txd);font-family:'IBM Plex Mono',monospace">Coeficiente Pearson (r) — período seleccionado · clic en celda para análisis detallado</div>
+    <div style="display:flex;align-items:center;gap:6px;font-size:9px;font-family:'IBM Plex Mono',monospace;color:var(--txd)">
+      <span style="display:inline-block;width:60px;height:10px;border-radius:3px;background:linear-gradient(90deg,#3b82f6,#1a2f45,#ef4444)"></span>
+      <span>-1</span><span style="margin-left:18px">0</span><span style="margin-left:18px">+1</span>
+    </div>
+  </div>
+  <div style="overflow-x:auto;-webkit-overflow-scrolling:touch">
+    <canvas id="hmCanvas" style="display:block;cursor:pointer"></canvas>
+  </div>
+</div>
+
 <!-- CORRELATION -->
 <div class="st" style="margin-top:26px"><span>🔗</span> Análisis de Correlaciones</div>
-<div class="corr-section">
-  <div class="corr-ctrl">
+<div class="corr-section" id="corrSection">  <div class="corr-ctrl">
     <div class="fg"><label>Variable A — Eje X</label><select id="cX"></select></div>
     <button class="sb" onclick="swp()">⇄</button>
     <div class="fg"><label>Variable B — Eje Y</label><select id="cY"></select></div>
@@ -342,12 +365,13 @@ function sR(days){
 function avgVals(arr){ return arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : null; }
 function maxVals(arr){ return arr.length ? Math.max(...arr) : null; }
 
-// Merge points from multiple keys by date — average across keys per date,
-// then return flat array sorted by date. Used for grouped KPI cards.
-function getMergedPts(keys){
+// Merge points from multiple keys by date — respects date filter
+// Used for grouped KPI cards.
+function getMergedPts(keys, respectFilter=false){
   const byDate={};
   keys.forEach(k=>{
-    getAllPts(k).forEach(p=>{
+    const pts = respectFilter ? gS(k) : getAllPts(k);
+    pts.forEach(p=>{
       if(!byDate[p.fecha]) byDate[p.fecha]=[];
       byDate[p.fecha].push(p.valor);
     });
@@ -367,125 +391,143 @@ function getUnit(compOrGroup){
   return 'LPM';
 }
 
-// ── KPI BUILD — grouped cards, Pre vs Post Synergy ───────────────────────────
+// ── KPI BUILD — unified grid layout, filter-aware Pre vs Post Synergy ─────────
 function buildKPIs(){
   const cont=document.getElementById('kA'); cont.innerHTML='';
 
-  // Each entry: label, cls, unit, isFlow, alarm, trip, cards[]
-  // Parámetros oficiales Bel-Ray / Synergy
-  const sections=[
-    { label:'⚙️ Carga', cls:'load', unit:'TPH', isFlow:false, alarm:null, trip:null, cards:[
-        { name:'Carga Molino', keys:['Carga Molino'] }
-    ]},
-    { label:'🌡️ Temperatura Piñón', cls:'temp', unit:'°C', isFlow:false, alarm:66, trip:74, cards:[
-        { name:'Piñón Lado Motor',               keys:['eje piñón lado motor'] },
-        { name:'Piñón Opuesto Motor',             keys:['eje piñón opuesto motor'] },
-    ]},
-    { label:'🌡️ Temperatura Estanque', cls:'temp', unit:'°C', isFlow:false, alarm:45, trip:59, cards:[
-        { name:'Estanque Lubricación',            keys:['Estanque lubricación'] }
-    ]},
-    { label:'🌡️ T° Descanso Descarga', cls:'temp', unit:'°C', isFlow:false, alarm:54, trip:60, cards:[
-        { name:'Descarga — Prom. RTD 5·6·7',     keys:['Descanso descarga RTD N°5','Descanso descarga RTD N°6','Descanso descarga RTD N°7'] }
-    ]},
-    { label:'🌡️ T° Descanso Alimentación', cls:'temp', unit:'°C', isFlow:false, alarm:54, trip:60, cards:[
-        { name:'Alimentación — Prom. RTD 1·2·3·4', keys:['Descanso alimentanción RTD N°1','Descanso alimentanción RTD N°2','Descanso alimentanción RTD N°3','Descanso alimentanción RTD N°4'] }
-    ]},
-    { label:'⏲️ Presiones Descanso', cls:'pres', unit:'PSI', isFlow:false, isPres:true, alarm:400, trip:300, cards:[
-        { name:'Descarga — Prom. LM + OM',       keys:['Descanso descarga lado motor','Descanso descarga opuesto motor'] },
-        { name:'Alimentación — Prom. LM + OM',   keys:['Descanso alimentación lado motor','Descanso alimentación opuesto motor'] },
-    ]},
-    { label:'💧 Flujos Descanso', cls:'flow', unit:'LPM', isFlow:true, alarm:26.25, trip:18.75, cards:[
-        { name:'Descarga — Prom. LM + OM',       keys:['Descanso descarga lado motor LPM','Descanso descarga opuesto motor LPM'] },
-        { name:'Alimentación — Prom. LM + OM',   keys:['Descanso alimentación lado motor LPM','Descanso alimentación opuesto motor LPM'] },
-    ]},
-    { label:'💧 Flujos Piñón', cls:'flow', unit:'LPM', isFlow:true, alarm:1.2, trip:0.9, cards:[
-        { name:'Piñón Lado Motor',               keys:['Piñón lado motor LPM'] },
-        { name:'Piñón Opuesto Motor',             keys:['Piñón opuesto motor LPM'] },
-    ]},
+  // Card definitions — all will respect the active date filter
+  const CARD_DEFS = [
+    // ── Carga
+    { group:'⚙️ Carga',          cls:'load', unit:'TPH',  isFlow:false, isPres:false, alarm:null,  trip:null,  name:'Carga Molino',                    keys:['Carga Molino'] },
+    // ── Temperatura Piñón
+    { group:'🌡️ Temperatura',    cls:'temp', unit:'°C',   isFlow:false, isPres:false, alarm:66,    trip:74,    name:'T° Piñón — Lado Motor',            keys:['eje piñón lado motor'] },
+    { group:'🌡️ Temperatura',    cls:'temp', unit:'°C',   isFlow:false, isPres:false, alarm:66,    trip:74,    name:'T° Piñón — Opuesto Motor',         keys:['eje piñón opuesto motor'] },
+    // ── Temperatura Estanque
+    { group:'🌡️ Temperatura',    cls:'temp', unit:'°C',   isFlow:false, isPres:false, alarm:45,    trip:59,    name:'T° Estanque Lubricación',           keys:['Estanque lubricación'] },
+    // ── Temperatura Descansos
+    { group:'🌡️ Temperatura',    cls:'temp', unit:'°C',   isFlow:false, isPres:false, alarm:54,    trip:60,    name:'T° Descarga (RTD 5·6·7)',          keys:['Descanso descarga RTD N°5','Descanso descarga RTD N°6','Descanso descarga RTD N°7'] },
+    { group:'🌡️ Temperatura',    cls:'temp', unit:'°C',   isFlow:false, isPres:false, alarm:54,    trip:60,    name:'T° Alimentación (RTD 1·2·3·4)',    keys:['Descanso alimentanción RTD N°1','Descanso alimentanción RTD N°2','Descanso alimentanción RTD N°3','Descanso alimentanción RTD N°4'] },
+    // ── Presiones
+    { group:'⏲️ Presiones',      cls:'pres', unit:'PSI',  isFlow:false, isPres:true,  alarm:400,   trip:300,   name:'Presión Descarga (LM + OM)',        keys:['Descanso descarga lado motor','Descanso descarga opuesto motor'] },
+    { group:'⏲️ Presiones',      cls:'pres', unit:'PSI',  isFlow:false, isPres:true,  alarm:400,   trip:300,   name:'Presión Alimentación (LM + OM)',    keys:['Descanso alimentación lado motor','Descanso alimentación opuesto motor'] },
+    // ── Flujos Descanso
+    { group:'💧 Flujos',         cls:'flow', unit:'LPM',  isFlow:true,  isPres:false, alarm:26.25, trip:18.75, name:'Flujo Descarga (LM + OM)',          keys:['Descanso descarga lado motor LPM','Descanso descarga opuesto motor LPM'] },
+    { group:'💧 Flujos',         cls:'flow', unit:'LPM',  isFlow:true,  isPres:false, alarm:26.25, trip:18.75, name:'Flujo Alimentación (LM + OM)',      keys:['Descanso alimentación lado motor LPM','Descanso alimentación opuesto motor LPM'] },
+    // ── Flujos Piñón
+    { group:'💧 Flujos',         cls:'flow', unit:'LPM',  isFlow:true,  isPres:false, alarm:1.2,   trip:0.9,   name:'Flujo Piñón Lado Motor',            keys:['Piñón lado motor LPM'] },
+    { group:'💧 Flujos',         cls:'flow', unit:'LPM',  isFlow:true,  isPres:false, alarm:1.2,   trip:0.9,   name:'Flujo Piñón Opuesto Motor',         keys:['Piñón opuesto motor LPM'] },
   ];
 
-  sections.forEach(sec=>{
-    const wrap=document.createElement('div'); wrap.className='ks';
-    wrap.innerHTML=`<div class="ks-hdr">${sec.label}</div><div class="kr"></div>`;
-    const kr=wrap.querySelector('.kr');
+  // Build one card element
+  function makeCard(cd){
+    // All historical points from cutoff (for pre/post split, always full history)
+    const allHist = getMergedPts(cd.keys, false);
+    // Filtered points (for "período seleccionado" stats)
+    const filtered = getMergedPts(cd.keys, true);
 
-    sec.cards.forEach(cardDef=>{
-      const all = getMergedPts(cardDef.keys);
-      if(!all.length) return;
+    if(!allHist.length && !filtered.length) return null;
 
-      const prePts  = all.filter(p=>p.fecha <  SYNERGY_DATE);
-      const postPts = all.filter(p=>p.fecha >= SYNERGY_DATE);
-      const preVals  = prePts.map(p=>p.valor);
-      const postVals = postPts.map(p=>p.valor);
+    // Pre/Post split always uses full history from cutoff
+    const prePts   = allHist.filter(p=>p.fecha <  SYNERGY_DATE);
+    const postPts  = allHist.filter(p=>p.fecha >= SYNERGY_DATE);
+    const preVals  = prePts.map(p=>p.valor);
+    const postVals = postPts.map(p=>p.valor);
 
-      const preAvg  = avgVals(preVals);
-      const postAvg = avgVals(postVals);
-      const allMax  = maxVals(all.map(p=>p.valor));
-      const lastPt  = postPts.length ? postPts[postPts.length-1] : (prePts.length ? prePts[prePts.length-1] : null);
-      const lastVal  = lastPt ? lastPt.valor  : null;
-      const lastDate = lastPt ? lastPt.fecha  : '—';
+    const preAvg  = avgVals(preVals);
+    const postAvg = avgVals(postVals);
 
-      // Delta % post vs pre
-      let deltaTxt='—', deltaCls='eq';
-      if(preAvg!==null && postAvg!==null && preAvg!==0){
-        const dp=(postAvg-preAvg)/preAvg*100;
-        deltaTxt=`${dp>=0?'+':''}${dp.toFixed(1)}%`;
-        if(Math.abs(dp)>=0.5)
-          deltaCls = (sec.isFlow || sec.isPres) ? (dp<0?'up':'dn') : (dp>0?'up':'dn');
+    // Stats from the active filter period
+    const filtVals = filtered.map(p=>p.valor);
+    const filtAvg  = avgVals(filtVals);
+    const filtMax  = maxVals(filtVals);
+    const lastPt   = filtered.length ? filtered[filtered.length-1]
+                   : (allHist.length ? allHist[allHist.length-1] : null);
+    const lastVal  = lastPt ? lastPt.valor : null;
+    const lastDate = lastPt ? lastPt.fecha : '—';
+
+    // Delta % post vs pre (full history)
+    let deltaTxt='—', deltaCls='eq';
+    if(preAvg!==null && postAvg!==null && preAvg!==0){
+      const dp=(postAvg-preAvg)/preAvg*100;
+      deltaTxt=`${dp>=0?'+':''}${dp.toFixed(1)}%`;
+      if(Math.abs(dp)>=0.5)
+        deltaCls=(cd.isFlow||cd.isPres)?(dp<0?'up':'dn'):(dp>0?'up':'dn');
+    }
+
+    // Alert color for post avg
+    let postCls='';
+    if(postAvg!==null){
+      const alertOnLow=cd.isFlow||cd.isPres;
+      if(alertOnLow){
+        if(cd.trip  && postAvg<=cd.trip)  postCls='alert';
+        else if(cd.alarm && postAvg<=cd.alarm) postCls='warn';
+      } else {
+        if(cd.trip  && postAvg>=cd.trip)  postCls='alert';
+        else if(cd.alarm && postAvg>=cd.alarm) postCls='warn';
       }
+    }
 
-      // Alert color for post avg — trip = red alert, alarm = amber warn
-      // alertOnLow: true for flujos AND presiones (low = bad)
-      // alertOnHigh: true for temperaturas (high = bad)
-      let postCls='';
-      if(postAvg!==null){
-        const alertOnLow = sec.isFlow || sec.isPres;
-        if(alertOnLow){
-          if(sec.trip  && postAvg <= sec.trip)  postCls='alert';
-          else if(sec.alarm && postAvg <= sec.alarm) postCls='warn';
-        } else {
-          if(sec.trip  && postAvg >= sec.trip)  postCls='alert';
-          else if(sec.alarm && postAvg >= sec.alarm) postCls='warn';
-        }
-      }
+    const preAvgTxt  = preAvg!==null  ? preAvg.toFixed(1)  : '—';
+    const postAvgTxt = postAvg!==null ? postAvg.toFixed(1) : '—';
+    const filtAvgTxt = filtAvg!==null ? filtAvg.toFixed(1) : '—';
+    const filtMaxTxt = filtMax!==null ? filtMax.toFixed(1) : '—';
+    const lastTxt    = lastVal!==null ? lastVal.toFixed(1) : '—';
 
-      const preAvgTxt  = preAvg!==null  ? preAvg.toFixed(1)  : 'Sin datos';
-      const postAvgTxt = postAvg!==null ? postAvg.toFixed(1) : 'Sin datos';
+    const threshTxt = cd.alarm ? `${cd.alarm}${cd.trip?` / ${cd.trip}`:''}` : '—';
 
-      // Threshold hint line for card footer
-      let threshHtml='';
-      if(sec.alarm && sec.trip){
-        threshHtml=`<div class="kstat"><span class="kstat-lbl">⚠ Alarma / ⛔ Trip</span><span class="kstat-val" style="color:var(--txd)">${sec.alarm} / ${sec.trip} ${sec.unit}</span></div>`;
-      }
-
-      const card=document.createElement('div'); card.className=`k ${sec.cls}`;
-      card.innerHTML=`
-        <div class="k-top">
-          <div class="kl">${cardDef.name}</div>
-          <span class="kdelta ${deltaCls}" title="Variación Prom. Post vs Pre Synergy">${deltaTxt}</span>
+    const card=document.createElement('div'); card.className=`k ${cd.cls}`;
+    card.innerHTML=`
+      <div class="k-top">
+        <div class="kl">${cd.name}</div>
+        <span class="kdelta ${deltaCls}" title="Variación Prom. Post vs Pre Synergy">${deltaTxt}</span>
+      </div>
+      <div class="k-compare">
+        <div class="k-col pre">
+          <span class="k-col-lbl">Pre Synergy</span>
+          <span class="k-col-avg">${preAvgTxt}</span>
+          <span class="k-col-sub">${cd.unit} · ${preVals.length} reg.</span>
         </div>
-        <div class="k-compare">
-          <div class="k-col pre">
-            <span class="k-col-lbl">Pre Synergy</span>
-            <span class="k-col-avg">${preAvgTxt}</span>
-            <span class="k-col-sub">${sec.unit} · ${preVals.length} reg.</span>
-          </div>
-          <div class="k-col post">
-            <span class="k-col-lbl">Post Synergy</span>
-            <span class="k-col-avg ${postCls}">${postAvgTxt}</span>
-            <span class="k-col-sub">${sec.unit} · ${postVals.length} reg.</span>
-          </div>
+        <div class="k-col post">
+          <span class="k-col-lbl">Post Synergy</span>
+          <span class="k-col-avg ${postCls}">${postAvgTxt}</span>
+          <span class="k-col-sub">${cd.unit} · ${postVals.length} reg.</span>
         </div>
-        <div class="k-bottom">
-          <div class="kstat">
-            <span class="kstat-lbl">Máx. histórico</span>
-            <span class="kstat-val">${allMax!==null?allMax.toFixed(1):'—'} ${sec.unit}</span>
-          </div>
-          ${threshHtml || `<div class="kstat"><span class="kstat-lbl">Último</span><span class="kstat-val">${lastVal!==null?lastVal.toFixed(1):'—'} · ${lastDate}</span></div>`}
-        </div>`;
-      kr.appendChild(card);
+      </div>
+      <div class="k-bottom">
+        <div class="kstat">
+          <span class="kstat-lbl">Período actual</span>
+          <span class="kstat-val">Prom: ${filtAvgTxt} · Máx: ${filtMaxTxt}</span>
+        </div>
+        <div class="kstat">
+          <span class="kstat-lbl">Último · ${lastDate}</span>
+          <span class="kstat-val">${lastTxt} ${cd.unit}${cd.alarm?` <span style="color:var(--txd);font-size:9px">⚠${cd.alarm}${cd.trip?' ⛔'+cd.trip:''}</span>`:''}</span>
+        </div>
+      </div>`;
+    return card;
+  }
+
+  // ── Layout: 4 thematic rows ────────────────────────────────────────────────
+  // Row 1: Carga (1 card)
+  // Row 2: Temperatura — 5 cards in one row
+  // Row 3: Presiones — 2 cards
+  // Row 4: Flujos — 4 cards
+  const rows = [
+    { label:'⚙️ Carga Molino',           cards: CARD_DEFS.filter(c=>c.group==='⚙️ Carga') },
+    { label:'🌡️ Temperaturas',           cards: CARD_DEFS.filter(c=>c.group==='🌡️ Temperatura') },
+    { label:'⏲️ Presiones Descanso',     cards: CARD_DEFS.filter(c=>c.group==='⏲️ Presiones') },
+    { label:'💧 Flujos',                  cards: CARD_DEFS.filter(c=>c.group==='💧 Flujos') },
+  ];
+
+  rows.forEach(row=>{
+    const sec=document.createElement('div'); sec.className='ks';
+    const kr=document.createElement('div'); kr.className='kr';
+    sec.innerHTML=`<div class="ks-hdr">${row.label}</div>`;
+    sec.appendChild(kr);
+    row.cards.forEach(cd=>{
+      const el=makeCard(cd);
+      if(el) kr.appendChild(el);
     });
-    if(kr.children.length) cont.appendChild(wrap);
+    if(kr.children.length) cont.appendChild(sec);
   });
 }
 
@@ -622,8 +664,7 @@ function buildTrends(){
   });
 }
 
-// ── CORRELATION ───────────────────────────────────────────────────────────────
-// Mismas variables que scorecards y gráficos — excluye Manifold, Filtros alta/baja
+// ── CORRELATION KEYS (shared by heatmap and scatter) ─────────────────────────
 const CORR_KEYS = [
   'Carga Molino',
   'eje piñón lado motor', 'eje piñón opuesto motor',
@@ -637,37 +678,177 @@ const CORR_KEYS = [
   'Piñón lado motor LPM', 'Piñón opuesto motor LPM',
 ];
 
+// ── PEARSON ───────────────────────────────────────────────────────────────────
+function pearson(x,y){
+  const n=x.length; if(n<2) return 0;
+  const mx=x.reduce((a,b)=>a+b,0)/n, my=y.reduce((a,b)=>a+b,0)/n;
+  let num=0,dx2=0,dy2=0;
+  x.forEach((v,i)=>{num+=(v-mx)*(y[i]-my);dx2+=(v-mx)**2;dy2+=(y[i]-my)**2;});
+  return dx2&&dy2?num/Math.sqrt(dx2*dy2):0;
+}
+
+// ── HEATMAP ───────────────────────────────────────────────────────────────────
+const HM_LABELS = {
+  'Carga Molino':'Carga',
+  'eje piñón lado motor':'T° Piñón LM',
+  'eje piñón opuesto motor':'T° Piñón OM',
+  'Estanque lubricación':'T° Estanque',
+  'Descanso descarga RTD N°5':'T° Desc R5',
+  'Descanso descarga RTD N°6':'T° Desc R6',
+  'Descanso descarga RTD N°7':'T° Desc R7',
+  'Descanso alimentanción RTD N°1':'T° Alim R1',
+  'Descanso alimentanción RTD N°2':'T° Alim R2',
+  'Descanso alimentanción RTD N°3':'T° Alim R3',
+  'Descanso alimentanción RTD N°4':'T° Alim R4',
+  'Descanso descarga lado motor':'P Desc LM',
+  'Descanso descarga opuesto motor':'P Desc OM',
+  'Descanso alimentación lado motor':'P Alim LM',
+  'Descanso alimentación opuesto motor':'P Alim OM',
+  'Descanso descarga lado motor LPM':'F Desc LM',
+  'Descanso descarga opuesto motor LPM':'F Desc OM',
+  'Descanso alimentación lado motor LPM':'F Alim LM',
+  'Descanso alimentación opuesto motor LPM':'F Alim OM',
+  'Piñón lado motor LPM':'F Piñón LM',
+  'Piñón opuesto motor LPM':'F Piñón OM',
+};
+
+function hmColor(r){
+  const a=0.15+0.78*Math.abs(r);
+  if(r>=0) return `rgba(${Math.round(220*r+20*(1-r))},${Math.round(40*r+55*(1-r))},${Math.round(40*r+75*(1-r))},${a})`;
+  const t=Math.abs(r);
+  return `rgba(${Math.round(20*t+20*(1-t))},${Math.round(110*t+55*(1-t))},${Math.round(230*t+75*(1-t))},${a})`;
+}
+
+function buildHeatmap(){
+  const keys=CORR_KEYS, n=keys.length;
+  const labels=keys.map(k=>HM_LABELS[k]||k);
+  const cache={};
+  keys.forEach(k=>{const m={};gS(k).forEach(p=>m[p.fecha]=p.valor);cache[k]=m;});
+  const matrix=[];
+  for(let i=0;i<n;i++){
+    matrix[i]=[];
+    for(let j=0;j<n;j++){
+      if(i===j){matrix[i][j]=1;continue;}
+      const dates=Object.keys(cache[keys[i]]).filter(d=>cache[keys[j]][d]!==undefined);
+      matrix[i][j]=pearson(dates.map(d=>cache[keys[i]][d]),dates.map(d=>cache[keys[j]][d]));
+    }
+  }
+  const canvas=document.getElementById('hmCanvas');
+  const dpr=window.devicePixelRatio||1;
+  const LABEL_W=82, LABEL_H=82, CELL=38;
+  const W=LABEL_W+n*CELL, H=LABEL_H+n*CELL+22;
+  canvas.width=W*dpr; canvas.height=H*dpr;
+  canvas.style.width=W+'px'; canvas.style.height=H+'px'; canvas.style.minWidth=W+'px';
+  const ctx=canvas.getContext('2d'); ctx.scale(dpr,dpr);
+  ctx.fillStyle='#0d1825'; ctx.fillRect(0,0,W,H);
+  for(let i=0;i<n;i++){
+    for(let j=0;j<n;j++){
+      const r=matrix[i][j];
+      const x=LABEL_W+j*CELL, y=LABEL_H+i*CELL;
+      ctx.fillStyle=i===j?'rgba(0,212,255,0.07)':hmColor(r);
+      ctx.beginPath(); ctx.roundRect(x+1,y+1,CELL-2,CELL-2,3); ctx.fill();
+      if(i===j){
+        ctx.fillStyle='rgba(0,212,255,0.35)';
+        ctx.font=`bold 10px 'IBM Plex Mono',monospace`;
+        ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillText('—',x+CELL/2,y+CELL/2);
+      } else {
+        const abs=Math.abs(r);
+        ctx.fillStyle=abs>0.65?'#fff':abs>0.35?'#d4e6f4':'#617d96';
+        ctx.font=`${abs>0.5?'bold ':''}9px 'IBM Plex Mono',monospace`;
+        ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillText(r.toFixed(2),x+CELL/2,y+CELL/2);
+      }
+    }
+  }
+  // Grid
+  ctx.strokeStyle='rgba(6,12,20,0.9)'; ctx.lineWidth=0.5;
+  for(let i=0;i<=n;i++){
+    ctx.beginPath(); ctx.moveTo(LABEL_W,LABEL_H+i*CELL); ctx.lineTo(W,LABEL_H+i*CELL); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(LABEL_W+i*CELL,LABEL_H); ctx.lineTo(LABEL_W+i*CELL,LABEL_H+n*CELL); ctx.stroke();
+  }
+  // Top labels (rotated)
+  for(let j=0;j<n;j++){
+    ctx.save();
+    ctx.translate(LABEL_W+j*CELL+CELL/2, LABEL_H-6);
+    ctx.rotate(-Math.PI/2.2);
+    ctx.fillStyle='#8bafc8'; ctx.font=`9px 'IBM Plex Mono',monospace`;
+    ctx.textAlign='left'; ctx.textBaseline='middle';
+    ctx.fillText(labels[j],0,0);
+    ctx.restore();
+  }
+  // Left labels
+  for(let i=0;i<n;i++){
+    ctx.fillStyle='#8bafc8'; ctx.font=`9px 'IBM Plex Mono',monospace`;
+    ctx.textAlign='right'; ctx.textBaseline='middle';
+    ctx.fillText(labels[i],LABEL_W-5, LABEL_H+i*CELL+CELL/2);
+  }
+  // Legend bar at bottom
+  const ly=LABEL_H+n*CELL+6, lx=LABEL_W, lw=n*CELL;
+  const grd=ctx.createLinearGradient(lx,ly,lx+lw,ly);
+  grd.addColorStop(0,'rgba(20,110,230,0.9)');
+  grd.addColorStop(0.5,'rgba(20,40,65,0.4)');
+  grd.addColorStop(1,'rgba(220,40,40,0.9)');
+  ctx.fillStyle=grd; ctx.beginPath(); ctx.roundRect(lx,ly,lw,10,3); ctx.fill();
+  ctx.fillStyle='#617d96'; ctx.font=`8px 'IBM Plex Mono',monospace`;
+  ctx.textAlign='left'; ctx.textBaseline='top'; ctx.fillText('-1.0 (neg.)',lx,ly+12);
+  ctx.textAlign='center'; ctx.fillText('0',lx+lw/2,ly+12);
+  ctx.textAlign='right'; ctx.fillText('+1.0 (pos.)',lx+lw,ly+12);
+  // Click → scatter
+  canvas.onclick=function(e){
+    const rect=canvas.getBoundingClientRect();
+    const sx=W/rect.width, sy=H/rect.height;
+    const j=Math.floor(((e.clientX-rect.left)*sx-LABEL_W)/CELL);
+    const i=Math.floor(((e.clientY-rect.top)*sy-LABEL_H)/CELL);
+    if(i>=0&&i<n&&j>=0&&j<n&&i!==j){
+      document.getElementById('cX').value=keys[j];
+      document.getElementById('cY').value=keys[i];
+      buildCorr();
+      document.getElementById('corrSection').scrollIntoView({behavior:'smooth',block:'start'});
+    }
+  };
+  canvas.onmousemove=function(e){
+    const rect=canvas.getBoundingClientRect();
+    const sx=W/rect.width, sy=H/rect.height;
+    const j=Math.floor(((e.clientX-rect.left)*sx-LABEL_W)/CELL);
+    const i=Math.floor(((e.clientY-rect.top)*sy-LABEL_H)/CELL);
+    canvas.style.cursor=(i>=0&&i<n&&j>=0&&j<n&&i!==j)?'pointer':'default';
+  };
+}
+
+// ── CORRELATION SCATTER ───────────────────────────────────────────────────────
 function initSelects(){
   ['cX','cY'].forEach((id,i)=>{
-    const sel=document.getElementById(id);sel.innerHTML='';
+    const sel=document.getElementById(id); sel.innerHTML='';
     CORR_KEYS.forEach(k=>{const o=document.createElement('option');o.value=k;o.textContent=k;sel.appendChild(o);});
     sel.value=i===0?'eje piñón opuesto motor':'Estanque lubricación';
   });
   buildCorr();
 }
 function swp(){const a=document.getElementById('cX').value,b=document.getElementById('cY').value;document.getElementById('cX').value=b;document.getElementById('cY').value=a;buildCorr();}
-function pearson(x,y){const n=x.length;if(n<2)return 0;const mx=x.reduce((a,b)=>a+b,0)/n,my=y.reduce((a,b)=>a+b,0)/n;let num=0,dx2=0,dy2=0;x.forEach((v,i)=>{num+=(v-mx)*(y[i]-my);dx2+=(v-mx)**2;dy2+=(y[i]-my)**2;});return dx2&&dy2?num/Math.sqrt(dx2*dy2):0;}
 function buildCorr(){
-  const kx=document.getElementById('cX').value,ky=document.getElementById('cY').value;
-  const mx={},my={};gS(kx).forEach(p=>mx[p.fecha]=p.valor);gS(ky).forEach(p=>my[p.fecha]=p.valor);
+  const kx=document.getElementById('cX').value, ky=document.getElementById('cY').value;
+  const mx={},my={};
+  gS(kx).forEach(p=>mx[p.fecha]=p.valor); gS(ky).forEach(p=>my[p.fecha]=p.valor);
   const dates=Object.keys(mx).filter(d=>my[d]!==undefined).sort();
-  const vx=dates.map(d=>mx[d]),vy=dates.map(d=>my[d]);
-  const r=pearson(vx,vy),r2=(r*r).toFixed(3);
+  const vx=dates.map(d=>mx[d]), vy=dates.map(d=>my[d]);
+  const r=pearson(vx,vy), r2=(r*r).toFixed(3);
   document.getElementById('pR').textContent=r.toFixed(3);
   document.getElementById('pR2').textContent=r2;
   document.getElementById('pN').textContent=`n = ${dates.length} pts`;
   document.getElementById('pM').style.left=((r+1)/2*100).toFixed(0)+'%';
-  const abs=Math.abs(r);let desc='Sin correlación';
-  if(abs>0.8)desc=r>0?'Positiva fuerte':'Negativa fuerte';
-  else if(abs>0.5)desc=r>0?'Positiva moderada':'Negativa moderada';
-  else if(abs>0.3)desc=r>0?'Positiva débil':'Negativa débil';
-  const dc=document.getElementById('pD');dc.textContent=desc;dc.style.color=abs>0.5?'var(--cyan)':'var(--txd)';
-  if(chCorr)chCorr.destroy();
+  const abs=Math.abs(r); let desc='Sin correlación';
+  if(abs>0.8) desc=r>0?'Positiva fuerte':'Negativa fuerte';
+  else if(abs>0.5) desc=r>0?'Positiva moderada':'Negativa moderada';
+  else if(abs>0.3) desc=r>0?'Positiva débil':'Negativa débil';
+  const dc=document.getElementById('pD'); dc.textContent=desc; dc.style.color=abs>0.5?'var(--cyan)':'var(--txd)';
+  if(chCorr) chCorr.destroy();
   const cx=TIPO_PALETTES[DATA[kx]?.tipo]?.[0]||'#38bdf8';
   chCorr=new Chart(document.getElementById('chC'),{type:'scatter',
     data:{datasets:[{data:dates.map((d,i)=>({x:vx[i],y:vy[i]})),backgroundColor:cx+'99',borderColor:cx,pointRadius:4,pointHoverRadius:6}]},
     options:{responsive:true,maintainAspectRatio:false,
-      plugins:{legend:{display:false},tooltip:{backgroundColor:'#0d1825',borderColor:'#1a2f45',borderWidth:1,callbacks:{label:c=>`(${c.parsed.x.toFixed(1)}, ${c.parsed.y.toFixed(1)})`},bodyFont:{family:"'IBM Plex Mono'",size:10}}},
+      plugins:{legend:{display:false},tooltip:{backgroundColor:'#0d1825',borderColor:'#1a2f45',borderWidth:1,
+        callbacks:{label:c=>`(${c.parsed.x.toFixed(1)}, ${c.parsed.y.toFixed(1)})`},bodyFont:{family:"'IBM Plex Mono'",size:10}}},
       scales:{x:{title:{display:true,text:kx.length>32?kx.slice(0,30)+'…':kx,font:{size:9}},grid:{color:'#1a2f45'},ticks:{font:{size:9}}},
               y:{title:{display:true,text:ky.length>32?ky.slice(0,30)+'…':ky,font:{size:9}},grid:{color:'#1a2f45'},ticks:{font:{size:9}}}}}
   });
@@ -675,9 +856,10 @@ function buildCorr(){
 document.getElementById('cX').addEventListener('change',buildCorr);
 document.getElementById('cY').addEventListener('change',buildCorr);
 
-function rebuild(){buildKPIs();buildTrends();buildCorr();}
+function rebuild(){buildKPIs();buildTrends();buildHeatmap();buildCorr();}
 initD();initSelects();rebuild();
-dFEl.addEventListener('change',rebuild);dTEl.addEventListener('change',rebuild);
+dFEl.addEventListener('change',rebuild);
+dTEl.addEventListener('change',rebuild);
 </script>
 </body>
 </html>
