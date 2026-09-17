@@ -322,7 +322,7 @@ function buildIndex(){
   });
   return idx;
 }
-const IDX=buildIndex();
+let IDX=buildIndex();
 
 // ── GLOBAL CUTOFF: ignore all data before 26-Jan-2026 ────────────────────────
 const DATA_CUTOFF  = '2026-01-26';
@@ -845,6 +845,7 @@ async function loadData(){
   if(!json.DATA || !json.TIPO_DATA) throw new Error('Respuesta sin DATA/TIPO_DATA');
   DATA = json.DATA;
   TIPO_DATA = json.TIPO_DATA;
+  IDX = buildIndex();
 }
 
 async function boot(isRefresh){
