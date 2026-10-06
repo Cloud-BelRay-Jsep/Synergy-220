@@ -839,9 +839,18 @@ function buildHeatmap(){
 function rebuild(){buildKPIs();buildTrends();buildHeatmap();buildCorr();}
 
 async function loadData(){
-  const res = await fetch(SHEET_API_URL, {cache:'no-store'});
-  if(!res.ok) throw new Error('HTTP '+res.status);
-  const json = await res.json();
+  let json=null, lastErr=null;
+  for(let attempt=1; attempt<=3 && !json; attempt++){
+    const ctl = new AbortController();
+    const to = setTimeout(()=>ctl.abort(), 45000);
+    try{
+      const res = await fetch(SHEET_API_URL, {signal: ctl.signal});
+      if(!res.ok) throw new Error('HTTP '+res.status);
+      json = await res.json();
+    }catch(e){ lastErr=e; await new Promise(r=>setTimeout(r,2000*attempt)); }
+    finally{ clearTimeout(to); }
+  }
+  if(!json) throw lastErr || new Error('Sin respuesta');
   if(!json.DATA || !json.TIPO_DATA) throw new Error('Respuesta sin DATA/TIPO_DATA');
   DATA = json.DATA;
   TIPO_DATA = json.TIPO_DATA;
@@ -876,4 +885,3 @@ setInterval(()=>boot(true), AUTO_REFRESH_MS);
 </script>
 </body>
 </html>
- 
