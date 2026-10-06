@@ -701,7 +701,7 @@ function buildTrends(){
 // ── TIPO-BASED CORRELATION — agrupado por Tipo de Medición ─────────────────
 // RTDs promedian en un solo punto; heatmap 16×16 limpio
 const HM_LBL = {"Tonelada Hora Molino": "Carga TPH", "Temperatura Piñón Lado Motor": "T° Piñón LM", "Temperatura Piñón Lado Opuesto Motor": "T° Piñón OM", "Temperatura Estanque Lubricación": "T° Estanque", "Temperatura Descanso Descarga": "T° Desc ×3", "Temperatura Descanso Alimentación": "T° Alim ×4", "Presiones Descanso Descarga Lado Motor": "P Desc LM", "Presiones Descanso Descarga Lado Opuesto Motor": "P Desc OM", "Presiones Descanso Alimentación Lado Motor": "P Alim LM", "Presiones Descanso Alimentación Lado Opuesto Motor": "P Alim OM", "Flujos Descanso Descarga Lado Motor": "F Desc LM", "Flujos Descanso Descarga Lado Opuesto Motor": "F Desc OM", "Flujos Descanso Alimentación Lado Motor": "F Alim LM", "Flujos Descanso Alimentación Lado Opuesto Motor": "F Alim OM", "Flujos Piñon Lado Motor": "F Piñón LM", "Flujos Piñon Lado Opuesto Motor": "F Piñón OM"};
-const HM_KEYS = Object.keys(TIPO_DATA);
+let HM_KEYS = [];
 
 // Obtener puntos filtrados para un Tipo (promedio ya calculado en TIPO_DATA)
 function gTipo(tipo){
@@ -855,6 +855,7 @@ async function loadData(){
   DATA = json.DATA;
   TIPO_DATA = json.TIPO_DATA;
   IDX = buildIndex();
+  HM_KEYS = Object.keys(TIPO_DATA);
 }
 
 async function boot(isRefresh){
@@ -865,8 +866,7 @@ async function boot(isRefresh){
     document.getElementById('kA').innerHTML = `<div style="color:#ef4444;font-family:monospace;padding:20px;background:#1a0a0a;border-radius:8px;margin:10px 0">⚠ No se pudo cargar la data en vivo desde el Sheet.<br><small>${e.message}</small></div>`;
     return;
   }
-  if(!isRefresh) initD();
-  initSelects();
+  if(!isRefresh){ initD(); initSelects(); }
   try {
     rebuild();
   } catch(e) {
@@ -885,3 +885,4 @@ setInterval(()=>boot(true), AUTO_REFRESH_MS);
 </script>
 </body>
 </html>
+ 
