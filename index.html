@@ -838,16 +838,22 @@ function buildHeatmap(){
 
 function rebuild(){buildKPIs();buildTrends();buildHeatmap();buildCorr();}
 
+let _badge=null;
+function setStatus(txt,color){
+  if(!_badge){_badge=document.createElement('div');_badge.style.cssText="position:fixed;right:12px;bottom:12px;z-index:9999;font:11px 'Roboto Mono',monospace;padding:6px 10px;border-radius:6px;background:#0d1825;border:1px solid #1a2f45;color:#7fa8c4;max-width:60vw";document.body.appendChild(_badge);}
+  _badge.style.color=color||'#7fa8c4'; _badge.textContent=txt;
+}
 async function loadData(){
   let json=null, lastErr=null;
   for(let attempt=1; attempt<=3 && !json; attempt++){
+    setStatus('Cargando datos del Sheet… intento '+attempt+'/3');
     const ctl = new AbortController();
     const to = setTimeout(()=>ctl.abort(), 45000);
     try{
       const res = await fetch(SHEET_API_URL, {signal: ctl.signal});
       if(!res.ok) throw new Error('HTTP '+res.status);
       json = await res.json();
-    }catch(e){ lastErr=e; await new Promise(r=>setTimeout(r,2000*attempt)); }
+    }catch(e){ lastErr=e; setStatus('Reintentando… ('+(e.message||e)+')','#f59e0b'); await new Promise(r=>setTimeout(r,2000*attempt)); }
     finally{ clearTimeout(to); }
   }
   if(!json) throw lastErr || new Error('Sin respuesta');
@@ -856,6 +862,8 @@ async function loadData(){
   TIPO_DATA = json.TIPO_DATA;
   IDX = buildIndex();
   HM_KEYS = Object.keys(TIPO_DATA);
+  const nPts=Object.values(DATA).reduce((a,d)=>a+d.dates.length,0);
+  setStatus('Datos actualizados '+new Date().toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'})+' · '+Object.keys(DATA).length+' series · '+nPts+' puntos','#22c55e');
 }
 
 async function boot(isRefresh){
@@ -863,6 +871,7 @@ async function boot(isRefresh){
     await loadData();
   }catch(e){
     console.error('No se pudo cargar la data del Sheet:', e);
+    setStatus('Error al cargar: '+(e.message||e),'#ef4444');
     document.getElementById('kA').innerHTML = `<div style="color:#ef4444;font-family:monospace;padding:20px;background:#1a0a0a;border-radius:8px;margin:10px 0">⚠ No se pudo cargar la data en vivo desde el Sheet.<br><small>${e.message}</small></div>`;
     return;
   }
@@ -885,4 +894,3 @@ setInterval(()=>boot(true), AUTO_REFRESH_MS);
 </script>
 </body>
 </html>
- 
