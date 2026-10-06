@@ -838,6 +838,46 @@ function buildHeatmap(){
 
 function rebuild(){buildKPIs();buildTrends();buildHeatmap();buildCorr();}
 
+// Normaliza nombres del Sheet (por si el Apps Script entrega variantes) y arma TIPO_DATA
+function normTipo(t){
+  let x=String(t||'').trim().replace(/\s+/g,' ');
+  x=x.replace(/\s*RTD\s*N?[°º]?\s*\d+\s*$/i,'');
+  return x.replace(/Descanso descarga/i,'Descanso Descarga').replace(/Descanso alimentaci[oó]n/i,'Descanso Alimentación');
+}
+function normGrupo(g){
+  const x=String(g||'').trim().replace(/\s+/g,' ');
+  if(/^Flujos Descansos?\b/i.test(x)) return 'Flujos Descansos';
+  if(/^Presiones Descansos?\b/i.test(x)) return 'Presiones Descanso';
+  if(/^Temperatura Descansos?\b/i.test(x)) return 'Temperatura Descansos';
+  return x;
+}
+function rebuildTipoData(){
+  const byTipo={};
+  Object.entries(DATA).forEach(([comp,d])=>{
+    const t=d.tipo; if(!byTipo[t]) byTipo[t]={grupo:d.grupo,comps:[],byDate:{}};
+    byTipo[t].comps.push(comp);
+    d.dates.forEach((f,i)=>{(byTipo[t].byDate[f]=byTipo[t].byDate[f]||[]).push(d.values[i]);});
+  });
+  const out={};
+  Object.entries(byTipo).forEach(([t,o])=>{
+    const dates=Object.keys(o.byDate).sort();
+    out[t]={grupo:o.grupo,comps:o.comps,dates,values:dates.map(f=>{const a=o.byDate[f];return Math.round(a.reduce((u,v)=>u+v,0)/a.length*100)/100;}),n_comps:o.comps.length};
+  });
+  return out;
+}
+const COMP_CANON = ['Carga Molino','eje piñón lado motor','eje piñón opuesto motor','Estanque lubricación',
+ 'Descanso descarga RTD N°5','Descanso descarga RTD N°6','Descanso descarga RTD N°7',
+ 'Descanso alimentanción RTD N°1','Descanso alimentanción RTD N°2','Descanso alimentanción RTD N°3','Descanso alimentanción RTD N°4',
+ 'Descanso descarga lado motor','Descanso descarga opuesto motor','Descanso alimentación lado motor','Descanso alimentación opuesto motor',
+ 'Descanso descarga lado motor LPM','Descanso descarga opuesto motor LPM','Descanso alimentación lado motor LPM','Descanso alimentación opuesto motor LPM',
+ 'Piñón lado motor LPM','Piñón opuesto motor LPM','Filtros de alta','Filtros de baja','Lubricación manifold'];
+function simpleKey(k){return String(k).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/alimentanc/g,'alimentac').replace(/n[°º]/g,'n').replace(/\s+/g,' ').trim();}
+const COMP_MAP = Object.fromEntries(COMP_CANON.map(c=>[simpleKey(c),c]));
+function canonComps(data){
+  const out={};
+  Object.entries(data).forEach(([k,v])=>{const nk=COMP_MAP[simpleKey(k)]||k; if(!out[nk]) out[nk]=v;});
+  return out;
+}
 let _badge=null;
 function setStatus(txt,color){
   if(!_badge){_badge=document.createElement('div');_badge.style.cssText="position:fixed;right:12px;bottom:12px;z-index:9999;font:11px 'Roboto Mono',monospace;padding:6px 10px;border-radius:6px;background:#0d1825;border:1px solid #1a2f45;color:#7fa8c4;max-width:60vw";document.body.appendChild(_badge);}
@@ -858,8 +898,9 @@ async function loadData(){
   }
   if(!json) throw lastErr || new Error('Sin respuesta');
   if(!json.DATA || !json.TIPO_DATA) throw new Error('Respuesta sin DATA/TIPO_DATA');
-  DATA = json.DATA;
-  TIPO_DATA = json.TIPO_DATA;
+  DATA = canonComps(json.DATA);
+  Object.values(DATA).forEach(d=>{d.tipo=normTipo(d.tipo); d.grupo=normGrupo(d.grupo);});
+  TIPO_DATA = rebuildTipoData();
   IDX = buildIndex();
   HM_KEYS = Object.keys(TIPO_DATA);
   const nPts=Object.values(DATA).reduce((a,d)=>a+d.dates.length,0);
@@ -894,3 +935,4 @@ setInterval(()=>boot(true), AUTO_REFRESH_MS);
 </script>
 </body>
 </html>
+ 
