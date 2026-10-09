@@ -763,12 +763,13 @@ function buildTrends(){
 // ═══ MAPA DE CALOR Y CORRELACIONES ═══════════════════════════════════════════
 const HM_LBL = {"Tonelada Hora Molino": "Carga TPH", "Temperatura Piñón Lado Motor": "T° Piñón LM", "Temperatura Piñón Lado Opuesto Motor": "T° Piñón OM", "Temperatura Estanque Lubricación": "T° Estanque", "Temperatura Descanso Descarga": "T° Desc ×3", "Temperatura Descanso Alimentación": "T° Alim ×4", "Presiones Descanso Descarga Lado Motor": "P Desc LM", "Presiones Descanso Descarga Lado Opuesto Motor": "P Desc OM", "Presiones Descanso Alimentación Lado Motor": "P Alim LM", "Presiones Descanso Alimentación Lado Opuesto Motor": "P Alim OM", "Flujos Descanso Descarga Lado Motor": "F Desc LM", "Flujos Descanso Descarga Lado Opuesto Motor": "F Desc OM", "Flujos Descanso Alimentación Lado Motor": "F Alim LM", "Flujos Descanso Alimentación Lado Opuesto Motor": "F Alim OM", "Flujos Piñon Lado Motor": "F Piñón LM", "Flujos Piñon Lado Opuesto Motor": "F Piñón OM"};
 // Variables = un promedio por agrupación + los sensores individuales (Tipo de medición)
+const CORR_SENSORES=false;   // true = agrega sensores individuales (Tipo de medición) al mapa y selectores
 function buildVars(){
   VARS=[];
   const groups=orderedGrupos();
   groups.forEach(g=>{ const c=cfgOf(g); VARS.push({key:'g:'+g,kind:'g',ref:g,label:'Ø '+c.short,long:`Promedio ${c.label} (${c.unit})`,opt:'Promedio por agrupación',unit:c.unit}); });
   const gSig={}; groups.forEach(g=>{gSig[(GRUPO_COMPS[g]||[]).slice().sort().join('|')]=1;});
-  groups.forEach(g=>Object.entries(IDX[g]||{}).forEach(([tipo,comps])=>{
+  if(CORR_SENSORES) groups.forEach(g=>Object.entries(IDX[g]||{}).forEach(([tipo,comps])=>{
     if(gSig[comps.slice().sort().join('|')]) return;     // mismo conjunto que el promedio de la agrupación
     VARS.push({key:'t:'+tipo,kind:'t',ref:tipo,label:HM_LBL[tipo]||tipo.replace('Temperatura ','T° ').replace('Presiones ','P ').replace('Flujos ','F ').slice(0,14),long:`${tipo} (${cfgOf(g).unit})`,opt:'Sensores (Tipo de medición)',unit:cfgOf(g).unit});
   }));
@@ -836,20 +837,21 @@ function buildHeatmap(){
   for(let i=0;i<n;i++){ mat[i]=[]; for(let j=0;j<n;j++){
     if(i===j){mat[i][j]=1;continue;}
     const ds=Object.keys(cache[keys[i]]).filter(d=>cache[keys[j]][d]!==undefined);
-    mat[i][j]=ds.length>=3?pearson(ds.map(d=>cache[keys[i]][d]),ds.map(d=>cache[keys[j]][d])):0;
+    mat[i][j]=ds.length>=3?pearson(ds.map(d=>cache[keys[i]][d]),ds.map(d=>cache[keys[j]][d])):null;
   }}
   const cv=document.getElementById('hmCanvas'), dpr=window.devicePixelRatio||1;
-  const LW=110,LH=110,CELL=n>18?31:38,W=LW+n*CELL,H=LH+n*CELL+24;
+  const LW=110,LH=110,CELL=n>18?31:n>10?38:56,W=LW+n*CELL,H=LH+n*CELL+24;
   cv.width=W*dpr; cv.height=H*dpr; cv.style.width=W+'px'; cv.style.height=H+'px'; cv.style.minWidth=W+'px';
   const ctx=cv.getContext('2d'); ctx.scale(dpr,dpr);
   ctx.fillStyle='#0d1a27'; ctx.fillRect(0,0,W,H);
   const nAvg=VARS.filter(v=>v.kind==='g').length;
   for(let i=0;i<n;i++){for(let j=0;j<n;j++){
     const r=mat[i][j], x=LW+j*CELL, y=LH+i*CELL;
+    if(r===null){ctx.fillStyle='rgba(97,125,150,.06)';ctx.beginPath();ctx.roundRect(x+1,y+1,CELL-2,CELL-2,3);ctx.fill();ctx.fillStyle='#3d566b';ctx.font=`9px 'Roboto Mono',monospace`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('s/d',x+CELL/2,y+CELL/2);continue;}
     ctx.fillStyle=i===j?'rgba(14,184,216,.06)':hmColor(r);
     ctx.beginPath(); ctx.roundRect(x+1,y+1,CELL-2,CELL-2,3); ctx.fill();
     if(i===j){ctx.fillStyle='rgba(14,184,216,.3)';ctx.font=`bold 10px 'Roboto Mono',monospace`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('—',x+CELL/2,y+CELL/2);}
-    else{const abs=Math.abs(r);ctx.fillStyle=abs>0.6?'#fff':abs>0.35?'#cfe2f3':'#56788f';ctx.font=`${abs>0.5?'500 ':''}8px 'Roboto Mono',monospace`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(fmtN(r,2),x+CELL/2,y+CELL/2);}
+    else{const abs=Math.abs(r);ctx.fillStyle=abs>0.6?'#fff':abs>0.35?'#cfe2f3':'#56788f';ctx.font=`${abs>0.5?'500 ':''}${CELL>45?11:8}px 'Roboto Mono',monospace`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(fmtN(r,2),x+CELL/2,y+CELL/2);}
   }}
   ctx.strokeStyle='rgba(8,17,28,.85)'; ctx.lineWidth=.5;
   for(let i=0;i<=n;i++){ ctx.beginPath();ctx.moveTo(LW,LH+i*CELL);ctx.lineTo(W,LH+i*CELL);ctx.stroke(); ctx.beginPath();ctx.moveTo(LW+i*CELL,LH);ctx.lineTo(LW+i*CELL,LH+n*CELL);ctx.stroke(); }
